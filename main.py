@@ -2,94 +2,138 @@ import os
 import time
 import requests
 from telegram import Bot, Update, ReplyKeyboardMarkup
-from telegram.ext import CommandHandler, MessageHandler, filters, ApplicationBuilder, ContextTypes
+from telegram.ext import (
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ApplicationBuilder,
+    ContextTypes,
+)
 from keep_alive import keep_alive
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID")
-MEXC_API_KEY = os.environ.get("MEXC_API_KEY")
-MEXC_SECRET_KEY = os.environ.get("MEXC_SECRET_KEY")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+MEXC_API_KEY = os.getenv("MEXC_API_KEY")
+MEXC_SECRET_KEY = os.getenv("MEXC_SECRET_KEY")
 
-# Стартові параметри
-margin = 100
-leverage = {
-    'SOL': 300,
-    'PEPE': 300,
-    'BTC': 500,
-    'ETH': 500
+coins = {
+    "SOL": {"leverage": 300},
+    "PEPE": {"leverage": 300},
+    "BTC": {"leverage": 500},
+    "ETH": {"leverage": 500}
 }
-coins = ['SOL', 'PEPE', 'BTC', 'ETH']
-
-def get_price(symbol):
-    try:
-        url = f'https://api.mexc.com/api/v1/contract/market/ticker?symbol={symbol}_USDT'
-        response = requests.get(url)
-        data = response.json()
-        return float(data['data'][0]['lastPrice'])
-    except Exception as e:
-        print(f"[ПОМИЛКА] Ціна {symbol}: {e}")
-        return None
+margin = 100
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [['Змінити маржу'], ['Змінити плече'], ['Додати монету'], ['Ціни зараз']]
+    keyboard = [["Змінити маржу", "Змінити плече"], ["Додати монету", "Ціни зараз"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("🤖 Бот активовано", reply_markup=reply_markup)
+    await update.message.reply_text("👋 Привіт! Бот активовано.", reply_markup=reply_markup)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global margin
-    text = update.message.text
-
-    if text == 'Змінити маржу':
-        await update.message.reply_text("Введи нову маржу ($):")
-        return
-
-    if text == 'Ціни зараз':
-        msg = "📊 Поточні ціни:\n"
-        for coin in coins:
-            price = get_price(coin)
-            if price:
-                msg += f"{coin}: ${price:.4f}\n"
-            else:
-                msg += f"{coin}: помилка отримання\n"
+    msg = update.message.text
+    if msg == "Ціни зараз":
+        prices = get_prices()
+        if prices:
+            msg = "📊 Поточні ціни:\n" + "\n".join([f"{k}: ${v}" for k, v in prices.items()])
+        else:
+            msg = "⚠️ Помилка отримання цін."
         await update.message.reply_text(msg)
-        return
 
-    if text.isdigit():
-        margin = int(text)
-        await update.message.reply_text(f"✅ Нова маржа: ${margin}")
-        return
+    elif msg == "Змінити маржу":
+        await update.message.reply_text("Введи нову маржу в $ (наприклад 150):")
+        context.user_data["awaiting_margin"] = True
 
-    await update.message.reply_text("Невідома команда.")
+    elif msg == "Змінити плече":
+        await update.message.reply_text("Введи монету і плече (наприклад: SOL 250):")
+        context.user_data["awaiting_leverage"] = True
 
-async def send_signal(application):
-    while True:
+    elif msg == "Додати монету":
+        await update.message.reply_text("Введи монету (наприклад: DOGE 200):")
+        context.user_data["awaiting_add_coin"] = True
+
+    elif context.user_data.get("awaiting_margin"):
         try:
-            for coin in coins:
-                price = get_price(coin)
-                if price:
-                    direction = "LONG" if price % 2 < 1 else "SHORT"
-                    sl = round(price * (0.99 if direction == "LONG" else 1.01), 4)
-                    tp = round(price * (1.01 if direction == "LONG" else 0.99), 4)
-                    lev = leverage.get(coin, 100)
-                    msg = (
-                        f"📈 Сигнал {direction} по {coin}/USDT\n"
-                        f"🔹 Вхід: ${price}\n"
-                        f"🎯 TP: {tp}\n"
-                        f"🛡 SL: {sl}\n"
-                        f"💰 Маржа: ${margin}\n"
-                        f"🚀 Плече: {lev}×"
-                    )
-                    await application.bot.send_message(chat_id=CHAT_ID, text=msg)
-            await application.bot.send_message(chat_id=CHAT_ID, text="⏳ Пошук можливостей на ринку...")
-        except Exception as e:
-            print(f"[ПОМИЛКА сигналу] {e}")
-        await asyncio.sleep(600)
+            margin = int(msg)
+            await update.message.reply_text(f"✅ Маржу змінено на ${margin}")
+        except:
+            await update.message.reply_text("❌ Помилка. Введи число.")
+        context.user_data["awaiting_margin"] = False
 
-if __name__ == '__main__':
+    elif context.user_data.get("awaiting_leverage"):
+        try:
+            coin, lev = msg.split()
+            coin = coin.upper()
+            lev = int(lev)
+            if coin in coins:
+                coins[coin]["leverage"] = lev
+                await update.message.reply_text(f"✅ Плече для {coin} змінено на {lev}×")
+            else:
+                await update.message.reply_text("❌ Такої монети немає.")
+        except:
+            await update.message.reply_text("❌ Введи у форматі: MONETA 200")
+        context.user_data["awaiting_leverage"] = False
+
+    elif context.user_data.get("awaiting_add_coin"):
+        try:
+            coin, lev = msg.split()
+            coin = coin.upper()
+            lev = int(lev)
+            coins[coin] = {"leverage": lev}
+            await update.message.reply_text(f"✅ Монету {coin} додано з плечем {lev}×")
+        except:
+            await update.message.reply_text("❌ Введи у форматі: MONETA 200")
+        context.user_data["awaiting_add_coin"] = False
+
+def get_prices():
+    try:
+        prices = {}
+        for symbol in coins:
+            pair = f"{symbol}_USDT"
+            url = f"https://api.mexc.com/api/v3/ticker/price?symbol={pair}"
+            res = requests.get(url)
+            data = res.json()
+            price = float(data["price"])
+            prices[symbol] = round(price, 6) if price < 1 else round(price, 2)
+        return prices
+    except:
+        return None
+
+def check_market():
+    prices = get_prices()
+    if not prices:
+        return None
+
+    signals = []
+    for coin, info in coins.items():
+        price = prices[coin]
+        if coin == "SOL" and price < 182:
+            signals.append(f"🔻 SHORT {coin} @ {price} | Leverage {info['leverage']}× | SL: {round(price + 1, 2)} | TP: {round(price - 2, 2)}")
+        elif coin == "SOL" and price > 182:
+            signals.append(f"🔼 LONG {coin} @ {price} | Leverage {info['leverage']}× | SL: {round(price - 1, 2)} | TP: {round(price + 2, 2)}")
+        # можна додати додаткові умови по інших монетах
+
+    return signals
+
+async def auto_signal(app):
+    bot = Bot(BOT_TOKEN)
+    counter = 0
+    while True:
+        if counter % 10 == 0:
+            await bot.send_message(chat_id=CHAT_ID, text="⏳ Пошук можливостей на ринку...")
+
+        signals = check_market()
+        if signals:
+            for s in signals:
+                await bot.send_message(chat_id=CHAT_ID, text=s)
+        await asyncio.sleep(60)
+        counter += 1
+
+if __name__ == "__main__":
     import asyncio
     keep_alive()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler('start', start))
+    app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
-    asyncio.get_event_loop().create_task(send_signal(app))
+    app.job_queue.run_once(lambda _: asyncio.create_task(auto_signal(app)), 1)
     app.run_polling()
