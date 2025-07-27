@@ -50,7 +50,7 @@ def handle_message(update: Update, context: CallbackContext):
 
     if text == "📊 Ціни зараз":
         prices = get_prices()
-        msg = "📊 Поточні ціни:
+    msg = "📊 Поточні ціни:\n"
 " + "\n".join([f"{c}: ${prices[c]}" for c in prices])
         update.message.reply_text(msg)
 
