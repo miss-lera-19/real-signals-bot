@@ -1,86 +1,106 @@
-
 import requests
 import time
-from telegram import Bot
+import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from keep_alive import keep_alive
-from threading import Thread
 
-BOT_TOKEN = "8441710554:AAGFDgaFwQpcx3bFQ-2FgjjlkK7CEKxmz34"
-CHAT_ID = "681357425"
-MEXC_API_URL = "https://api.mexc.com/api/v3/ticker/price"
+# 🔐 Токени та налаштування
+BOT_TOKEN = '8441710554:AAGFDgaFwQpcx3bFQ-2FgjjlkK7CEKxmz34'
+CHAT_ID = '681357425'
+MEXC_API_KEY = 'mx0vglwSqWMNfUkdXo'
+MEXC_SECRET_KEY = '7107c871e7dc4e3db79f4fddb07e917d'
 
-COINS = {
-    "SOL": {"symbol": "SOLUSDT", "leverage": 300},
-    "PEPE": {"symbol": "PEPEUSDT", "leverage": 300},
-    "BTC": {"symbol": "BTCUSDT", "leverage": 500},
-    "ETH": {"symbol": "ETHUSDT", "leverage": 500}
+# 📈 Монети та параметри
+coins = {
+    "SOL": {"leverage": 300},
+    "PEPE": {"leverage": 300},
+    "BTC": {"leverage": 500},
+    "ETH": {"leverage": 500},
 }
 
-MARGIN = 100
-bot = Bot(token=BOT_TOKEN)
+user_margin = 100  # стартова маржа
 
-# Отримання ціни
+# 🔄 Отримати поточну ціну з MEXC
 def get_price(symbol):
     try:
-        response = requests.get(MEXC_API_URL, params={"symbol": symbol}, timeout=5)
-        return float(response.json()["price"])
-    except:
+        url = f"https://api.mexc.com/api/v3/ticker/price?symbol={symbol}USDT"
+        response = requests.get(url)
+        data = response.json()
+        return float(data['price'])
+    except Exception as e:
+        logging.error(f"Помилка отримання ціни для {symbol}: {e}")
         return None
 
-# Аналіз ринку
-def analyze_market(symbol):
-    prices = []
-    for _ in range(3):
-        price = get_price(symbol)
-        if price:
-            prices.append(price)
-        time.sleep(1)
-    if len(prices) < 3:
-        return None
-    direction = "LONG" if prices[-1] > prices[0] and prices[-1] > prices[-2] else "SHORT"
-    return prices[-1], direction
-
-# Розрахунок TP і SL
-def calculate_tp_sl(price, direction, margin, leverage):
-    target_profit = 500  # $500 прибутку
-    risk = 100  # $100 ризику
-    tp = price * (1 + target_profit / (margin * leverage)) if direction == "LONG" else price * (1 - target_profit / (margin * leverage))
-    sl = price * (1 - risk / (margin * leverage)) if direction == "LONG" else price * (1 + risk / (margin * leverage))
-    return round(tp, 6), round(sl, 6)
-
-# Надсилання сигналу
-def send_signal(coin, price, direction, tp, sl, leverage):
-    msg = (
-        f"📈 Сигнал на {direction}
-"
-        f"Монета: {coin}/USDT
-"
-        f"Ціна входу: {price}
-"
-        f"TP: {tp}
-"
-        f"SL: {sl}
-"
-        f"Маржа: ${MARGIN}
-"
-        f"Плече: {leverage}×
-"
-        f"🎯 Стратегія: $500–1000 з угоди"
+# 📤 Надіслати сигнал у Telegram
+async def send_signal(context: ContextTypes.DEFAULT_TYPE, symbol, direction, entry, sl, tp, leverage):
+    text = (
+        f"📉 Сигнал на {direction}\n"
+        f"Монета: {symbol}/USDT\n"
+        f"Вхід: {entry}\n"
+        f"SL: {sl} | TP: {tp}\n"
+        f"Плече: {leverage}×\n"
+        f"Маржа: {user_margin}$\n"
+        f"#REALSIGNAL"
     )
-    bot.send_message(chat_id=CHAT_ID, text=msg)
+    await context.bot.send_message(chat_id=CHAT_ID, text=text)
 
-# Цикл перевірки
-def run_signals():
-    while True:
-        for coin, data in COINS.items():
-            result = analyze_market(data["symbol"])
-            if result:
-                price, direction = result
-                tp, sl = calculate_tp_sl(price, direction, MARGIN, data["leverage"])
-                send_signal(coin, price, direction, tp, sl, data["leverage"])
-            time.sleep(2)
-        time.sleep(60)
+# 📊 Логіка стратегії
+async def check_market(context: ContextTypes.DEFAULT_TYPE):
+    for coin, params in coins.items():
+        price = get_price(coin)
+        if price is None:
+            continue
 
-if __name__ == "__main__":
+        impulse = price % 10  # умовний сигнал на імпульс
+
+        if impulse > 5:
+            direction = "LONG"
+            entry = round(price * 1.001, 4)
+            sl = round(price * 0.995, 4)
+            tp = round(price * 1.01, 4)
+        else:
+            direction = "SHORT"
+            entry = round(price * 0.999, 4)
+            sl = round(price * 1.005, 4)
+            tp = round(price * 0.99, 4)
+
+        await send_signal(context, coin, direction, entry, sl, tp, params["leverage"])
+
+# 🔘 Обробка кнопок
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global user_margin
+    query = update.callback_query
+    await query.answer()
+    if query.data.startswith("margin_"):
+        user_margin = int(query.data.split("_")[1])
+        await query.edit_message_text(f"✅ Нова маржа: {user_margin}$")
+
+# 🟢 Команда /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("Маржа $100", callback_data='margin_100')],
+        [InlineKeyboardButton("Маржа $200", callback_data='margin_200')],
+        [InlineKeyboardButton("Маржа $500", callback_data='margin_500')],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("👋 Привіт! Обери маржу:", reply_markup=reply_markup)
+
+# 🟣 Ціни зараз
+async def prices_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = "📊 Поточні ціни:\n"
+    for coin in coins:
+        price = get_price(coin)
+        if price:
+            text += f"{coin}/USDT: {price}\n"
+    await update.message.reply_text(text)
+
+# 🚀 Старт
+if __name__ == '__main__':
     keep_alive()
-    Thread(target=run_signals).start()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("prices", prices_now))
+    app.add_handler(CallbackQueryHandler(button))
+    app.job_queue.run_repeating(check_market, interval=60, first=5)
+    app.run_polling()
