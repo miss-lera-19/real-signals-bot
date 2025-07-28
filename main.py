@@ -1,63 +1,39 @@
-import logging
 import os
-import asyncio
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-)
-from keep_alive import keep_alive
+from flask import Flask
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# === Константи ===
+# Telegram токен і chat_id (встав свої значення)
 BOT_TOKEN = "8441710554:AAGFDgaFwQpcx3bFQ-2FgjjlkK7CEKxmz34"
 CHAT_ID = 681357425
 
-# === Логування ===
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
+# Вебсервер для Render
+app = Flask(__name__)
 
-# === Кнопки ===
-keyboard = [
-    [InlineKeyboardButton("Ціни зараз", callback_data="prices")],
-    [InlineKeyboardButton("Змінити маржу", callback_data="change_margin")],
-    [InlineKeyboardButton("Змінити плече", callback_data="change_leverage")],
-    [InlineKeyboardButton("Додати монету", callback_data="add_coin")],
-]
-reply_markup = InlineKeyboardMarkup(keyboard)
+@app.route('/')
+def home():
+    return 'Bot is running!'
 
-# === /start команда ===
+# Обробник /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Привіт! Я бот для реальних сигналів.", reply_markup=reply_markup)
+    await update.message.reply_text("👋 Привіт! Я готовий до роботи.")
 
-# === Обробка кнопок ===
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    action = query.data
+# Обробник повідомлення "Привіт"
+async def hello(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text.lower() == "привіт":
+        await update.message.reply_text("Вітаю! Як можу допомогти?")
 
-    if action == "prices":
-        await query.edit_message_text(text="🔄 Отримую ціни... (реалізація пізніше)")
-    elif action == "change_margin":
-        await query.edit_message_text(text="Введіть нову маржу:")
-    elif action == "change_leverage":
-        await query.edit_message_text(text="Введіть нове плече:")
-    elif action == "add_coin":
-        await query.edit_message_text(text="Введіть монету, яку хочете додати:")
-    else:
-        await query.edit_message_text(text="Невідома дія.")
+if __name__ == '__main__':
+    import threading
 
-# === Головна функція ===
-async def main():
-    keep_alive()
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
+    def run_flask():
+        app.run(host='0.0.0.0', port=8080)
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(button))
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.start()
 
-    await application.run_polling()
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    # Telegram бот
+    app_bot = ApplicationBuilder().token(BOT_TOKEN).build()
+    app_bot.add_handler(CommandHandler("start", start))
+    app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, hello))
+    app_bot.run_polling()
