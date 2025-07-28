@@ -1,38 +1,45 @@
 import os
-from flask import Flask
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
-import asyncio
+import logging
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from keep_alive import keep_alive
 
+# Токен і Chat ID
 BOT_TOKEN = "8441710554:AAGFDgaFwQpcx3bFQ-2FgjjlkK7CEKxmz34"
 CHAT_ID = 681357425
 
-# Flask сервер для Render
-flask_app = Flask(__name__)
+# Логування
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 
-@flask_app.route('/')
-def home():
-    return '✅ Bot is running!'
-
-# Обробники команд Telegram
+# Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Привіт! Я готовий до роботи.")
+    keyboard = [["Ціни зараз"], ["Змінити маржу", "Змінити плече"], ["Додати монету"]]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text("Привіт! Бот запущено успішно ✅", reply_markup=reply_markup)
 
-async def hello(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text.lower() == "привіт":
-        await update.message.reply_text("Вітаю! Як можу допомогти?")
+# Відповідь на "Привіт"
+async def reply_hello(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Привіт! 👋 Я вже активний і готовий до роботи!")
 
-# Запуск Telegram бота
-async def run_bot():
+# Обробка будь-яких повідомлень
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message.text
+    if msg.lower() == "ціни зараз":
+        await update.message.reply_text("🔄 Отримую актуальні ціни...")
+        # Тут буде додано перевірку цін по API MEXC
+    else:
+        await update.message.reply_text("Я отримав твоє повідомлення!")
+
+# Запуск бота
+def run_bot():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, hello))
-    await app.run_polling()
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex("(?i)привіт"), reply_hello))
+    app.add_handler(MessageHandler(filters.TEXT, handle_message))
+    app.run_polling()
 
-# Запуск Flask і Telegram одночасно
-if __name__ == '__main__':
-    import threading
-
-    threading.Thread(target=lambda: flask_app.run(host="0.0.0.0", port=8080)).start()
-
-    asyncio.run(run_bot())
+keep_alive()
+run_bot()
